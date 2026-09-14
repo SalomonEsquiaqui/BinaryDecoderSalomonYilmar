@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Binary Decoder | ESP32</title>
+  <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="BinaryDecoderLogo.png">
+</head>
+<body>
+  <div class="noise"></div>
+
+  <main class="app-shell">
+    <header class="topbar glass">
+      <div class="brand">
+  <img src="BinaryDecoderLogo.png" alt="Binary Decoder" class="logo">
+
+  <div class="brand-text">
+    <span class="eyebrow">ELECTRÓNICA DIGITAL · ESP32</span>
+    <h1>Binary <span>Decoder</span></h1>
+    <p>Control remoto · Wokwi ↔ Web · MQTT</p>
+  </div>
+</div>
+
+      <div id="estado" class="status status-offline">
+        <span class="status-dot"></span>
+        Desconectado
+      </div>
+    </header>
+
+    <section class="dashboard">
+      <article class="panel glass display-panel">
+        <div class="panel-title">
+          <span>DISPLAY VIRTUAL</span>
+          <span class="chip">7 SEG</span>
+        </div>
+
+        <div class="seven-display" id="sevenDisplay" aria-label="Display de 7 segmentos">
+          <span class="seg a"></span>
+          <span class="seg b"></span>
+          <span class="seg c"></span>
+          <span class="seg d"></span>
+          <span class="seg e"></span>
+          <span class="seg f"></span>
+          <span class="seg g"></span>
+        </div>
+
+        <div id="display_num" class="hidden-number">0</div>
+
+        <div class="binary-readout">
+          <span id="display_bin">Bits DIP: [ 0 0 0 0 ]</span>
+          <strong id="label_origen">Origen: sistema</strong>
+        </div>
+      </article>
+
+      <article class="panel glass binary-panel">
+        <div class="panel-title">
+          <span>PATRÓN BINARIO</span>
+          <span class="chip yellow">MSB → LSB</span>
+        </div>
+
+        <div class="switch-control-header">
+    <div>
+        <span class="control-label">CONTROL DIP</span>
+        <span id="lockStatus">Bloqueado</span>
+    </div>
+
+    <button
+        id="lockButton"
+        class="lock-button locked"
+        type="button"
+        aria-label="Activar control de switches"
+        title="Activar control de switches"
+    >
+        <svg
+            id="lockIcon"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+        >
+            <rect x="5" y="10" width="14" height="11" rx="2"></rect>
+            <path d="M8 10V7C8 4.79 9.79 3 12 3C14.21 3 16 4.79 16 7V10"></path>
+            <circle cx="12" cy="15.5" r="1.2"></circle>
+        </svg>
+    </button>
+</div>
+
+        <div class="dip-preview">
+          <button class="virtual-switch" data-bit="0"><span></span><small>S1</small></button>
+          <button class="virtual-switch" data-bit="1"><span></span><small>S2</small></button>
+          <button class="virtual-switch" data-bit="2"><span></span><small>S3</small></button>
+          <button class="virtual-switch" data-bit="3"><span></span><small>S4</small></button>
+        </div>
+
+        <div class="binary-value">
+          <span>Entrada</span>
+          <b id="binaryInput">0000</b>
+          <span>Decimal</span>
+          <b id="decimalInput">0</b>
+        </div>
+
+        <p class="hint">
+          El DIP de Wokwi es la entrada real. Esta vista refleja el patrón recibido por MQTT.
+        </p>
+      </article>
+    </section>
+
+    <section class="panel glass keypad-panel">
+      <div class="panel-title">
+        <div>
+          <span>TECLADO DE CONTROL</span>
+          <p>Envía el dígito al display físico de Wokwi</p>
+        </div>
+        <span class="chip red">ESP32 ← WEB</span>
+      </div>
+
+      <div id="teclado" class="keypad"></div>
+    </section>
+
+    <footer class="footer">
+      <span>TOPIC ESTADO: <b>clase/decoder/salomon_esquiaqui/estado</b></span>
+      <span>TOPIC CONTROL: <b>clase/decoder/salomon_esquiaqui/control</b></span>
+    </footer>
+  </main>
+
+  <div id="toast" class="toast">Mensaje</div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
