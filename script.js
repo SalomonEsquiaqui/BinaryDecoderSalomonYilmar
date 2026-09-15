@@ -121,9 +121,9 @@ function conectar() {
     client.connect({
       useSSL: true,
       timeout: 8,
-      // Si la conexión se corta después de haber conectado bien,
-      // el propio cliente intenta reconectar solo (backoff automático).
-      reconnect: true,
+      // Paho no soporta la propiedad "reconnect" (eso es de otras
+      // librerías como MQTT.js). Aquí la reconexión ya la maneja
+      // el setInterval de más abajo, así que no hace falta.
       keepAliveInterval: 20,
       cleanSession: true,
       onSuccess: () => {
