@@ -15,7 +15,7 @@ MQTT_BROKER = "broker.hivemq.com"
 GRUPO = "salomon_esquiaqui"
 TOPIC_ENVIAR = "clase/decoder/{}/estado".format(GRUPO)
 TOPIC_RECIBIR = "clase/decoder/{}/control".format(GRUPO)
-
+TOPIC_STATUS = "clase/decoder/salomon_esquiaqui/status"
 # ============================================================
 # DIP SWITCH: S1 S2 S3 S4
 # S1 = MSB (8), S4 = LSB (1)
@@ -107,6 +107,20 @@ def conectar_wifi():
     print("WiFi OK - IP:", wlan.ifconfig()[0])
     return wlan
 
+    print("WiFi OK - IP:", wlan.ifconfig()[0])
+    return wlan
+
+
+    print("WiFi OK - IP:", wlan.ifconfig()[0])
+    return wlan
+
+
+# ============================================================
+# HEARTBEAT / ESTADO DE CONEXIÓN
+# ============================================================
+HEARTBEAT_INTERVAL = 3
+ultimo_heartbeat = 0
+
 
 # ============================================================
 # MQTT: FRONTEND -> ESP32
@@ -146,16 +160,29 @@ print("Conectando a MQTT...")
 client.connect()
 client.subscribe(TOPIC_RECIBIR)
 
+# Avisar al frontend que el ESP32 está conectado
+client.publish(TOPIC_STATUS, b"online")
+
 print("MQTT listo - escuchando en:", TOPIC_RECIBIR)
+print("Estado MQTT:", TOPIC_STATUS)
 
 # ============================================================
 # BUCLE PRINCIPAL
 # ============================================================
 ultimo = -1
+ultimo_heartbeat = time.ticks_ms()
 
 while True:
     # Revisar mensajes del frontend sin bloquear.
     client.check_msg()
+
+    # Enviar heartbeat cada 3 segundos
+    ahora = time.ticks_ms()
+
+    if time.ticks_diff(ahora, ultimo_heartbeat) >= HEARTBEAT_INTERVAL * 1000:
+        client.publish(TOPIC_STATUS, b"online")
+        ultimo_heartbeat = ahora
+        print("Heartbeat: ESP32 online")
 
     bit0, bit1, bit2, bit3, numero = leer_dip()
 

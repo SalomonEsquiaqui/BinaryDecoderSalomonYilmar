@@ -8,6 +8,18 @@ const GRUPO = "salomon_esquiaqui";
 
 const TOPIC_ESTADO = `clase/decoder/${GRUPO}/estado`;
 const TOPIC_CONTROL = `clase/decoder/${GRUPO}/control`;
+const TOPIC_STATUS = `clase/decoder/${GRUPO}/status`;
+
+// ============================================================
+// ESTADO REAL DEL ESP32 (heartbeat)
+// ============================================================
+// El ESP32 (main.py) publica "online" en TOPIC_STATUS cada 3s,
+// y el broker publica "offline" solo si el ESP32 se desconecta
+// de golpe (Last Will). Si no llega nada en este tiempo, se
+// asume que Wokwi no está corriendo.
+const HEARTBEAT_TIMEOUT_MS = 7000;
+let ultimoHeartbeat = 0;
+let esp32Conectado = false;
 
 // Cliente WebSocket seguro de HiveMQ.
 const client = new Paho.MQTT.Client(
@@ -50,9 +62,12 @@ function setDisplay(numero) {
   });
 }
 
-function setStatus(text, online = false) {
-  estado.classList.toggle("status-online", online);
-  estado.classList.toggle("status-offline", !online);
+// Estado visual unificado del indicador de arriba a la derecha.
+// state: "online" (verde), "warning" (amarillo), "offline" (rojo)
+function setStatus(text, state = "offline") {
+  estado.classList.toggle("status-online", state === "online");
+  estado.classList.toggle("status-warning", state === "warning");
+  estado.classList.toggle("status-offline", state === "offline");
   estado.innerHTML = `<span class="status-dot"></span>${text}`;
 }
 
@@ -71,41 +86,108 @@ function renderBinary(bits, numero, origen) {
 
   bits.split("").forEach((bit, index) => {
     const sw = document.querySelector(`.virtual-switch[data-bit="${index}"]`);
-    if (sw) sw.classList.toggle("on", bit === "1");
+    if (sw) sw.classList.toggle("active", bit === "1");
   });
+}
+
+let mqttConectado = false;
+
+// ------------------------------------------------------------
+// Estado unificado: combina "¿hay sesión MQTT?" con
+// "¿el ESP32 sigue mandando heartbeat?" en UN solo indicador
+// (arriba a la derecha).
+// ------------------------------------------------------------
+function actualizarEstadoGlobal() {
+  if (!mqttConectado) {
+    setStatus("Desconectado", "offline");
+    return;
+  }
+
+  const heartbeatFresco =
+    esp32Conectado && (Date.now() - ultimoHeartbeat) < HEARTBEAT_TIMEOUT_MS;
+
+  if (heartbeatFresco) {
+    setStatus("ESP32 en línea", "online");
+  } else {
+    setStatus("Wokwi sin responder", "warning");
+  }
 }
 
 function conectar() {
-  setStatus("Conectando…", false);
+  mqttConectado = false;
+  setStatus("Conectando…", "warning");
 
-  client.connect({
-    useSSL: true,
-    timeout: 8,
-    onSuccess: () => {
-      setStatus("Conectado", true);
-      client.subscribe(TOPIC_ESTADO);
-      showToast("MQTT conectado");
-      console.log("Suscrito a:", TOPIC_ESTADO);
-    },
-    onFailure: (err) => {
-      setStatus("Error MQTT", false);
-      console.error("MQTT:", err);
-      showToast("No se pudo conectar al broker");
-    }
-  });
+  try {
+    client.connect({
+      useSSL: true,
+      timeout: 8,
+      // Si la conexión se corta después de haber conectado bien,
+      // el propio cliente intenta reconectar solo (backoff automático).
+      reconnect: true,
+      keepAliveInterval: 20,
+      cleanSession: true,
+      onSuccess: () => {
+        mqttConectado = true;
+        client.subscribe(TOPIC_ESTADO);
+        client.subscribe(TOPIC_STATUS);
+        actualizarEstadoGlobal();
+        showToast("MQTT conectado, esperando al ESP32…");
+        console.log("Suscrito a:", TOPIC_ESTADO, "y", TOPIC_STATUS);
+      },
+      onFailure: (err) => {
+        mqttConectado = false;
+        actualizarEstadoGlobal();
+        console.error("MQTT:", err);
+        showToast("No se pudo conectar al broker");
+      }
+    });
+  } catch (e) {
+    // client.connect() puede lanzar si ya hay un intento en curso.
+    console.warn("connect() ignorado (ya en curso):", e);
+  }
 }
 
 client.onConnectionLost = response => {
-  setStatus("Desconectado", false);
+  mqttConectado = false;
+  esp32Conectado = false;
+  actualizarEstadoGlobal();
   if (response.errorCode !== 0) {
     console.warn("Conexión perdida:", response.errorMessage);
   }
+  // "reconnect: true" ya reintenta solo, pero por si acaso queda
+  // atascado, el chequeo periódico de más abajo también reintenta.
 };
 
+function marcarEsp32Vivo() {
+  ultimoHeartbeat = Date.now();
+  esp32Conectado = true;
+  actualizarEstadoGlobal();
+}
+
 client.onMessageArrived = message => {
+  // ----------------------------------------------------------
+  // Heartbeat / Last Will del ESP32
+  // ----------------------------------------------------------
+  if (message.destinationName === TOPIC_STATUS) {
+    const payload = message.payloadString.trim().toLowerCase();
+
+    if (payload === "offline") {
+      esp32Conectado = false;
+      actualizarEstadoGlobal();
+    } else {
+      marcarEsp32Vivo();
+    }
+
+    return;
+  }
+
   try {
     const datos = message.payloadString.trim().split(",");
     if (datos.length !== 2) return;
+
+    // Cualquier dato real del DIP también confirma que el
+    // ESP32 está vivo.
+    marcarEsp32Vivo();
 
     const [binario, decimalStr] = datos;
 
@@ -131,6 +213,79 @@ client.onMessageArrived = message => {
     console.error("[onMessageArrived]", e);
   }
 };
+
+document.getElementById("btnComprobarConexion")
+    .addEventListener("click", comprobarConexion);
+
+function comprobarConexion() {
+
+    const boton = document.getElementById("btnComprobarConexion");
+
+    boton.disabled = true;
+    boton.classList.add("spinning");
+
+    if (!client.isConnected()) {
+
+        console.log("MQTT desconectado, reconectando...");
+
+        mqttConectado = false;
+        esp32Conectado = false;
+        actualizarEstadoGlobal();
+
+        conectar();
+
+        setTimeout(() => {
+            boton.disabled = false;
+            boton.classList.remove("spinning");
+        }, 800);
+
+        return;
+    }
+
+    // El estado real ya se actualiza solo con cada heartbeat
+    // (ver marcarEsp32Vivo). Aquí solo refrescamos el indicador
+    // por si el heartbeat ya venció.
+    setTimeout(() => {
+        actualizarEstadoGlobal();
+        boton.disabled = false;
+        boton.classList.remove("spinning");
+    }, 500);
+}
+
+// Revisión automática cada 2s: si dejó de llegar heartbeat del
+// ESP32 (por ejemplo, se detuvo la simulación en Wokwi), el
+// indicador pasa solo a "Wokwi sin responder" sin tener que dar
+// clic. También sirve de red de seguridad: si el propio MQTT del
+// navegador quedó caído, reintenta conectar solo.
+let reconectando = false;
+
+setInterval(() => {
+    if (esp32Conectado && (Date.now() - ultimoHeartbeat) > HEARTBEAT_TIMEOUT_MS) {
+        esp32Conectado = false;
+    }
+    actualizarEstadoGlobal();
+
+    if (!client.isConnected() && !reconectando) {
+        reconectando = true;
+        console.log("MQTT caído, reintentando conectar...");
+        conectar();
+        setTimeout(() => { reconectando = false; }, 5000);
+    }
+}, 2000);
+
+// Cuando el navegador vuelve a tener foco/conexión (p. ej. se
+// minimizó la pestaña un rato), se fuerza una verificación
+// inmediata en vez de esperar hasta 2s, para "mantenerse
+// enlazado" con Wokwi lo más rápido posible.
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && !client.isConnected()) {
+        conectar();
+    }
+});
+
+window.addEventListener("online", () => {
+    if (!client.isConnected()) conectar();
+});
 
 // ============================================================
 // CONTROL WEB -> ESP32
@@ -329,49 +484,53 @@ function cambiarDesdeDipVirtual() {
     actualizarSwitches(bits);
 
     // Actualizar información visual
-    renderBinary(bits, numero, "control");
+    renderBinary(bits, numero, "control web");
 
     // Actualizar display de 7 segmentos
     if (numero >= 0 && numero <= 9) {
         setDisplay(numero);
     } else {
-        setDisplay(null);
+        setDisplay(-1);
     }
 
     // Enviar a Wokwi
-    enviarPatronADispositivo(bits);
+    enviarPatronADispositivo(numero);
 
 }
 
 
 // =========================================================
-// ENVIAR PATRÓN BINARIO A WOKWI
+// ENVIAR COMANDO AL ESP32
+// -----------------------------------------------------------
+// IMPORTANTE: main.py (al_recibir_del_frontend) solo entiende
+// un número decimal en texto ("0".."9"), igual que el teclado.
+// El DIP físico de Wokwi no se puede mover por software (son
+// pines GPIO de entrada reales), así que estos switches virtuales
+// funcionan como un atajo del teclado: si el patrón cae en 0-9 se
+// envía ese número; 10-15 no tienen equivalente en el display y
+// no se envían.
 // =========================================================
 
-function enviarPatronADispositivo(bits) {
+function enviarPatronADispositivo(numero) {
 
-    if (!client.isConnected()) {
-
-        console.warn(
-            "MQTT no está conectado. No se pudo enviar:",
-            bits
-        );
-
+    if (numero < 0 || numero > 9) {
+        showToast("Ese patrón (10–15) no se puede enviar: el ESP32 solo acepta 0–9");
         return;
     }
 
-    const message =
-        new Paho.MQTT.Message(bits);
+    if (!client.isConnected()) {
+        showToast("MQTT no está conectado");
+        console.warn("MQTT no está conectado. No se pudo enviar:", numero);
+        return;
+    }
 
-    message.destinationName =
-        TOPIC_CONTROL;
-
+    const message = new Paho.MQTT.Message(String(numero));
+    message.destinationName = TOPIC_CONTROL;
     client.send(message);
 
-    console.log(
-        "DIP virtual enviado a Wokwi:",
-        bits
-    );
+    showToast(`Enviado: ${numero} · ${numero.toString(2).padStart(4, "0")}`);
+
+    console.log("Comando enviado a Wokwi desde el DIP virtual:", numero);
 }
 
 

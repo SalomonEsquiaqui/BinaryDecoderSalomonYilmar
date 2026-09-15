@@ -22,9 +22,14 @@
   </div>
 </div>
 
-      <div id="estado" class="status status-offline">
-        <span class="status-dot"></span>
-        Desconectado
+      <div class="status-group">
+        <div id="estado" class="status status-offline">
+          <span class="status-dot"></span>
+          Desconectado
+        </div>
+        <button id="btnComprobarConexion" title="Forzar reconexión" aria-label="Comprobar conexión">
+          ↻
+        </button>
       </div>
     </header>
 
@@ -101,7 +106,9 @@
         </div>
 
         <p class="hint">
-          El DIP de Wokwi es la entrada real. Esta vista refleja el patrón recibido por MQTT.
+          El DIP de Wokwi es la entrada real: esta vista refleja en vivo el patrón que llega por MQTT.
+          Con el candado abierto puedes tocar los switches para enviarle un comando (0–9) al ESP32,
+          igual que con el teclado.
         </p>
       </article>
     </section>
