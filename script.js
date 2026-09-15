@@ -35,6 +35,26 @@ const labelOrigen = document.getElementById("label_origen");
 const binaryInput = document.getElementById("binaryInput");
 const decimalInput = document.getElementById("decimalInput");
 const toast = document.getElementById("toast");
+const btnModoOffline = document.getElementById("btnModoOffline");
+const btnComprobarConexion = document.getElementById("btnComprobarConexion");
+
+// ============================================================
+// MODO OFFLINE
+// ------------------------------------------------------------
+// Permite usar todo el simulador (teclado + DIP virtual) sin
+// internet ni broker MQTT: no intenta conectar, no valida
+// client.isConnected() y no muestra errores de red. Útil para
+// practicar o hacer una demo sin depender de Wokwi ni del wifi.
+// Se recuerda entre recargas con localStorage.
+// ============================================================
+let modoOffline = false;
+
+try {
+  modoOffline = localStorage.getItem("modoOffline") === "1";
+} catch (e) {
+  // localStorage puede no estar disponible (modo privado, etc.)
+  modoOffline = false;
+}
 
 const segmentos = {
   0: ["a","b","c","d","e","f"],
@@ -63,11 +83,13 @@ function setDisplay(numero) {
 }
 
 // Estado visual unificado del indicador de arriba a la derecha.
-// state: "online" (verde), "warning" (amarillo), "offline" (rojo)
+// state: "online" (verde), "warning" (amarillo), "offline" (rojo),
+// "cyan" (modo offline manual, activado por el usuario)
 function setStatus(text, state = "offline") {
   estado.classList.toggle("status-online", state === "online");
   estado.classList.toggle("status-warning", state === "warning");
   estado.classList.toggle("status-offline", state === "offline");
+  estado.classList.toggle("status-cyan", state === "cyan");
   estado.innerHTML = `<span class="status-dot"></span>${text}`;
 }
 
@@ -98,6 +120,11 @@ let mqttConectado = false;
 // (arriba a la derecha).
 // ------------------------------------------------------------
 function actualizarEstadoGlobal() {
+  if (modoOffline) {
+    setStatus("Modo offline", "cyan");
+    return;
+  }
+
   if (!mqttConectado) {
     setStatus("Desconectado", "offline");
     return;
@@ -114,6 +141,11 @@ function actualizarEstadoGlobal() {
 }
 
 function conectar() {
+  // En modo offline no se intenta ningún tipo de conexión: ni
+  // WebSocket, ni MQTT, ni reintentos. El programa debe funcionar
+  // 100% local sin depender de la red.
+  if (modoOffline) return;
+
   mqttConectado = false;
   setStatus("Conectando…", "warning");
 
@@ -221,6 +253,11 @@ function comprobarConexion() {
 
     const boton = document.getElementById("btnComprobarConexion");
 
+    if (modoOffline) {
+        showToast("Estás en modo offline: desactívalo para reconectar");
+        return;
+    }
+
     boton.disabled = true;
     boton.classList.add("spinning");
 
@@ -260,6 +297,8 @@ function comprobarConexion() {
 let reconectando = false;
 
 setInterval(() => {
+    if (modoOffline) return;
+
     if (esp32Conectado && (Date.now() - ultimoHeartbeat) > HEARTBEAT_TIMEOUT_MS) {
         esp32Conectado = false;
     }
@@ -278,12 +317,14 @@ setInterval(() => {
 // inmediata en vez de esperar hasta 2s, para "mantenerse
 // enlazado" con Wokwi lo más rápido posible.
 document.addEventListener("visibilitychange", () => {
+    if (modoOffline) return;
     if (document.visibilityState === "visible" && !client.isConnected()) {
         conectar();
     }
 });
 
 window.addEventListener("online", () => {
+    if (modoOffline) return;
     if (!client.isConnected()) conectar();
 });
 
@@ -292,6 +333,18 @@ window.addEventListener("online", () => {
 // ============================================================
 function enviarComando(numero) {
   if (!Number.isInteger(numero) || numero < 0 || numero > 9) return;
+
+  const bits = numero.toString(2).padStart(4, "0");
+
+  // En modo offline no hay validación de conexión ni intento de
+  // envío por MQTT: el teclado solo actualiza la vista local,
+  // como si fuera un simulador standalone.
+  if (modoOffline) {
+    setDisplay(numero);
+    renderBinary(bits, numero, "Teclado (offline)");
+    showToast(`Local: ${numero} · ${bits}`);
+    return;
+  }
 
   if (!client.isConnected()) {
     showToast("MQTT no está conectado");
@@ -303,7 +356,6 @@ function enviarComando(numero) {
   client.send(msg);
 
   // Respuesta visual inmediata del frontend.
-  const bits = numero.toString(2).padStart(4, "0");
   setDisplay(numero);
   renderBinary(bits, numero, "Teclado web");
 
@@ -330,10 +382,79 @@ document.addEventListener("keydown", e => {
   }
 });
 
+// ============================================================
+// TOGGLE MODO OFFLINE
+// ============================================================
+function aplicarUIModoOffline() {
+    btnModoOffline.classList.toggle("active", modoOffline);
+    btnModoOffline.setAttribute("aria-pressed", String(modoOffline));
+
+    const etiqueta = btnModoOffline.querySelector(".offline-label");
+    if (etiqueta) {
+        etiqueta.textContent = modoOffline ? "Offline activo" : "Modo offline";
+    }
+
+    // Mientras esté en modo offline no tiene sentido "forzar
+    // reconexión": se deshabilita para que quede claro.
+    btnComprobarConexion.disabled = modoOffline;
+    btnComprobarConexion.title = modoOffline
+        ? "Desactiva el modo offline para reconectar"
+        : "Forzar reconexión";
+}
+
+function activarModoOffline() {
+    modoOffline = true;
+
+    try { localStorage.setItem("modoOffline", "1"); } catch (e) {}
+
+    // Si había una sesión MQTT abierta, se cierra: en modo offline
+    // no debe quedar ninguna conexión de red activa en segundo plano.
+    if (client.isConnected()) {
+        try { client.disconnect(); } catch (e) {}
+    }
+
+    mqttConectado = false;
+    esp32Conectado = false;
+
+    aplicarUIModoOffline();
+    actualizarEstadoGlobal();
+    showToast("Modo offline activado: no se requiere conexión");
+}
+
+function desactivarModoOffline() {
+    modoOffline = false;
+
+    try { localStorage.setItem("modoOffline", "0"); } catch (e) {}
+
+    aplicarUIModoOffline();
+    actualizarEstadoGlobal();
+    showToast("Modo offline desactivado, reconectando…");
+
+    conectar();
+}
+
+btnModoOffline.addEventListener("click", () => {
+    if (modoOffline) {
+        desactivarModoOffline();
+    } else {
+        activarModoOffline();
+    }
+});
+
 // Inicializar display.
 setDisplay(0);
 renderBinary("0000", 0, "sistema");
-conectar();
+
+aplicarUIModoOffline();
+
+if (modoOffline) {
+    // Arranca directo en modo offline (se recordó de una sesión
+    // anterior): no se dispara ningún intento de red.
+    actualizarEstadoGlobal();
+    showToast("Modo offline activo: usando el simulador sin conexión");
+} else {
+    conectar();
+}
 
 
 // =========================================================
@@ -512,6 +633,19 @@ function cambiarDesdeDipVirtual() {
 // =========================================================
 
 function enviarPatronADispositivo(numero) {
+
+    // En modo offline el DIP virtual es puramente local: no hay
+    // ESP32 real al otro lado, así que ni se valida el rango contra
+    // "lo que el ESP32 acepta" ni se intenta enviar nada por MQTT.
+    // El display y los bits ya se actualizaron en cambiarDesdeDipVirtual().
+    if (modoOffline) {
+        if (numero >= 0 && numero <= 9) {
+            showToast(`Local: ${numero} · ${numero.toString(2).padStart(4, "0")}`);
+        } else {
+            showToast(`Local: patrón ${numero.toString(2).padStart(4, "0")} (fuera de 0–9)`);
+        }
+        return;
+    }
 
     if (numero < 0 || numero > 9) {
         showToast("Ese patrón (10–15) no se puede enviar: el ESP32 solo acepta 0–9");
